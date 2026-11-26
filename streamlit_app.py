@@ -40,14 +40,19 @@ def load_retriever():
     return Retriever(CFG["embedder"], index, chunks, use_reranker=False, embedder=model)
 
 
+def secret(name):
+    # Strips spaces and curly quotes that sometimes sneak in when pasting secrets.
+    return str(st.secrets[name]).strip().strip("\u201c\u201d\"'").strip()
+
+
 @st.cache_resource
 def load_client():
-    return OpenAI(base_url=st.secrets["LLM_BASE_URL"], api_key=st.secrets["LLM_API_KEY"])
+    return OpenAI(base_url=secret("LLM_BASE_URL").rstrip("/"), api_key=secret("LLM_API_KEY"))
 
 
 def stream_answer(messages):
     stream = load_client().chat.completions.create(
-        model=st.secrets["LLM_MODEL"], messages=messages, stream=True,
+        model=secret("LLM_MODEL"), messages=messages, stream=True,
         temperature=0, max_tokens=600,
     )
     for chunk in stream:
@@ -72,7 +77,7 @@ with st.sidebar:
                "nearest police station or barangay VAW Desk.")
     show_sources = st.toggle("Show retrieved sources", value=True)
     top_k = st.slider("Sources to retrieve (top-k)", 3, 8, CFG.get("top_k", 5))
-    st.caption(f"Model: {st.secrets.get('LLM_MODEL', '?')}  \nRetrieval: {CFG['embedder']} + FAISS")
+    st.caption(f"Model: {secret('LLM_MODEL')}  \nRetrieval: {CFG['embedder']} + FAISS")
     st.caption("Knowledge base: RA 9262, RA 11313, RA 7877, RA 9710, Barangay VAW Desk Handbook, SAFER Women module.")
     if st.button("Clear chat"):
         st.session_state.messages = []
@@ -114,5 +119,12 @@ if question:
                 reply = st.write_stream(stream_answer(build_messages(question, hits)))
             except Exception as e:
                 reply = "Sorry, the language model service is not responding right now. Please try again."
-                st.error(f"{reply}\n\n`{type(e).__name__}`")
+                st.error(f"{reply}\n\n`{type(e).__name__}`: {str(e)[:400]}")
+                st.caption(f"Base URL used: `{secret('LLM_BASE_URL')}` | Model used: `{secret('LLM_MODEL')}`")
+                try:  # show which model names this API key can use
+                    ids = sorted(m.id for m in load_client().models.list())
+                    st.info("Model names available to your key (copy one into LLM_MODEL):\n\n" +
+                            "\n".join(f"- `{i}`" for i in ids))
+                except Exception as e2:
+                    st.caption(f"Could not list models: `{type(e2).__name__}`: {str(e2)[:200]}")
     st.session_state.messages.append({"role": "assistant", "content": reply, "sources": src_md})
